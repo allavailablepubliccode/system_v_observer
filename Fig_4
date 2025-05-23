@@ -1,4 +1,4 @@
-%% create_fig4_synthetic_demo.m
+%% Generate Figure 4
 % -------------------------------------------------------------------------
 % This script simulates synthetic multimodal neural time series under two
 % generative scenarios:
@@ -7,9 +7,6 @@
 %
 % It then performs Bayesian model inversion and reduction to test whether
 % the correct model is statistically recoverable.
-%
-% This script produces **Figure 4** from the paper:
-% "Disambiguating System and Observer Effects in Multimodal Neuroimaging Using Stochastic Dynamics"
 % -------------------------------------------------------------------------
 
 clear; clc; close all; warning('off','all'); rng(0);
