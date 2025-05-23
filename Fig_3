@@ -1,10 +1,7 @@
-%% create_driver_signal.m
+%% Generate Figure 3
 % -----------------------------------------------------------
 % This script constructs a driver signal for simulations, mimicking 
 % slow scene-based fluctuations and fast stochastic perturbations.
-%
-% It reproduces **Figure 3** from the paper:
-% "Disambiguating System and Observer Effects in Multimodal Neuroimaging Using Stochastic Dynamics"
 % -----------------------------------------------------------
 
 clear; clc; close all; rng(0);
