@@ -1,0 +1,72 @@
+%% create_driver_signal.m
+% -----------------------------------------------------------
+% This script constructs a driver signal for simulations, mimicking 
+% slow scene-based fluctuations and fast stochastic perturbations.
+%
+% It reproduces **Figure 3** from the paper:
+% "Disambiguating System and Observer Effects in Multimodal Neuroimaging Using Stochastic Dynamics"
+% -----------------------------------------------------------
+
+clear; clc; close all; rng(0);
+
+%% PARAMETERS
+
+N       = 1000;     % Total number of timepoints
+targ_fs = 250;      % Sampling rate (Hz) used in simulations
+
+%% USER-SPECIFIED FILE PATH (EDIT THIS)
+% -----------------------------------------------------------
+% Path to CSV file containing scene transition times (in seconds).
+% YOU MUST REPLACE THIS with the path to your own copy.
+
+scene_file = 'REPLACE_WITH_PATH/scenecut_info.csv';
+% -----------------------------------------------------------
+
+%% LOAD SCENE CUT INFORMATION
+
+scene_cuts = readmatrix(scene_file);                    % Scene transitions (in seconds)
+scene_samples = round(scene_cuts * targ_fs);           % Convert to sample indices
+scene_samples = scene_samples(scene_samples > 1 & scene_samples < N);  % Keep valid samples only
+
+scene_boundaries = unique([1, scene_samples(:)', N + 1]);  % Define start/end points for each segment
+n_scenes = length(scene_boundaries) - 1;                  % Total number of scenes
+
+%% BUILD BASE INPUT: Piecewise constant signal with random values
+
+rng(0);  % For reproducibility
+base = zeros(1, N);                   % Initialize base signal
+scene_values = rand(1, n_scenes) * 2 - 1;  % Random value between -1 and 1 per scene
+
+for s = 1:n_scenes
+    idx_start = scene_boundaries(s);
+    idx_end   = scene_boundaries(s + 1) - 1;
+    base(idx_start:idx_end) = scene_values(s);  % Assign value to scene interval
+end
+
+%% ADD STRUCTURED NOISE
+
+noise = 0.5 * randn(1, N);            % Gaussian white noise
+driver = base + noise;                % Combine base signal with noise
+driver = smoothdata(driver, 'gaussian', 5);  % Optional smoothing (Gaussian window)
+
+%% PLOT (REPRODUCES FIGURE 3)
+
+figure;
+set(gcf, 'Position', [1 73 1014 464]);
+
+subplot(2,1,1);
+plot(base, 'k');
+ylabel('Base Input');
+title('Scene-Based Input Signal (Slow Fluctuations)');
+xlim([1, N]);
+
+subplot(2,1,2);
+plot(driver, 'k');
+ylabel('Final Driver');
+title('Final Driver Signal (Base + Noise)');
+xlabel('Time (samples @250 Hz)');
+xlim([1, N]);
+
+% Optional: Save figure as vector PDF
+% set(gcf, 'Renderer', 'painters');
+% print(gcf, 'REPLACE_WITH_PATH/driver_figure.pdf', '-dpdf', '-vector');
