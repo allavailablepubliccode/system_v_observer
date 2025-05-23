@@ -1,4 +1,4 @@
-%% create_fig7_inversion.m
+%% Generate Data for Figure 7
 % -------------------------------------------------------------------------
 % This script performs model inversion using spm_LAP across a sweep of
 % precision settings for each subject, saving results as .mat files.
