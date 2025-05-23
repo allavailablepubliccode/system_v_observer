@@ -1,11 +1,7 @@
-%% preprocess_empirical_data.m
+%% Generate Figure 2
 % -----------------------------------------------------------
 % This script extracts, preprocesses, and plots simultaneously recorded 
 % LFP and iEEG signals from the right hippocampus of one subject. 
-%
-% It reproduces **Figure 2** from the paper:
-% "Disambiguating System and Observer Effects in Multimodal Neuroimaging Using Stochastic Dynamics"
-%
 % -----------------------------------------------------------
 
 clear; clc; close all; rng(0);
