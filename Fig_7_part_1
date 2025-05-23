@@ -3,9 +3,7 @@
 % This script performs model inversion using spm_LAP across a sweep of
 % precision settings for each subject, saving results as .mat files.
 %
-% These results are used to evaluate how model fit varies with noise level,
-% supporting Figure 7 from the paper:
-% "Disambiguating System and Observer Effects in Multimodal Neuroimaging Using Stochastic Dynamics"
+% These results are used to evaluate how model fit varies with noise level
 % -------------------------------------------------------------------------
 
 clear; clc; close all; rng(0);
