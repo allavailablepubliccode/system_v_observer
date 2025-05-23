@@ -1,8 +1,5 @@
-%% create_fig5_stochastic_demo.m
+%% Generate Figure 5
 % -------------------------------------------------------------------------
-% This script replicates Figure 5 from the manuscript:
-% "Disambiguating System and Observer Effects in Multimodal Neuroimaging Using Stochastic Dynamics"
-%
 % It generates synthetic neural time series under two generative scenarios:
 %  A) Identical observers (system differences)
 %  B) Identical systems (observer differences)
