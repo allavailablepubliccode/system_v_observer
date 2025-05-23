@@ -1,0 +1,147 @@
+%% create_fig4_synthetic_demo.m
+% -------------------------------------------------------------------------
+% This script simulates synthetic multimodal neural time series under two
+% generative scenarios:
+%  A) Identical observers (different systems)
+%  B) Identical systems (different observers)
+%
+% It then performs Bayesian model inversion and reduction to test whether
+% the correct model is statistically recoverable.
+%
+% This script produces **Figure 4** from the paper:
+% "Disambiguating System and Observer Effects in Multimodal Neuroimaging Using Stochastic Dynamics"
+% -------------------------------------------------------------------------
+
+clear; clc; close all; warning('off','all'); rng(0);
+
+%% SIMULATION SETTINGS
+N       = 1000;      % Number of timepoints
+pvr     = 1;         % Prior variance scaling (used in reduction)
+
+%% CREATE EXTERNAL INPUT SIGNAL
+% Structured input resembling movie scenes (see Fig. 3 logic)
+U       = create_driver(N);  % Custom function returning [1 x N] signal
+
+%% MODEL STRUCTURE
+
+% Dynamic model embedding settings
+E.n     = 4;          % Embedding dimension (DEMs)
+E.d     = 1;          % Delay embedding
+E.nN    = 8;          % Iterations
+E.s     = 1/8;        % Smoothness
+E.dt    = 1/16;       % Integration step
+M(1).E  = E;
+
+% Initial conditions
+x.x     = 0;
+x.xt    = 0;
+M(1).x  = x;
+
+% System dynamics f(x,v,P): Two systems (x and x~)
+M(1).f = @(x,v,P) [P.a         * x.x  + P.b * v;
+                  (P.a + P.da) * x.xt + P.b * v];
+
+% Observer functions g(x,v,P): Two output mappings (x and x~)
+M(1).g = @(x,v,P) [P.c * tanh(P.k          * x.x);
+                  P.c * tanh((P.k + P.dk) * x.xt)];
+
+% Set generative parameters (shared across all conditions)
+P.a     = -7/2;     % System decay
+P.b     =  1/64;    % Input gain
+P.c     = 11/4;     % Observer gain
+P.k     =  9/8;     % Observer input scaling
+
+% Model precision settings
+M(1).V  = exp(149/16);    % Observation noise precision
+M(1).W  = exp(149/16);    % State noise precision
+M(2).v  = exp(6);         % Initial state variance
+M(2).V  = exp(149/16);    % Input noise precision
+
+%% === A) IDENTICAL OBSERVERS (System differences only) ===
+P.da    = 2.5;     % System difference
+P.dk    = 0;       % No observer difference
+M(1).pE = P;
+
+IO = spm_DEM_generate(M, U, P);  % Generate data
+
+subplot(2,2,1)
+plot(IO.Y')
+title('A: Identical Observers (System difference)')
+
+%% === B) IDENTICAL SYSTEMS (Observer differences only) ===
+P.da    = 0;       % No system difference
+P.dk    = -1.2;    % Observer difference
+M(1).pE = P;
+
+IS = spm_DEM_generate(M, U, P);  % Generate data
+
+subplot(2,2,2)
+plot(IS.Y')
+title('B: Identical Systems (Observer difference)')
+
+%% === MODEL INVERSION SETTINGS ===
+
+% Full model priors
+pE        = P; 
+pE.da     = 0;
+pE.dk     = 0;
+M(1).pE   = pE;
+
+pC        = spm_zeros(pE);       % Zero priors
+pC.da     = 1;
+pC.dk     = 1;
+M(1).pC   = diag(spm_vec(pC)) * pvr;
+
+% Copy models and inputs for inversion
+IO.M = M; IO.U = U;
+IS.M = M; IS.U = U;
+
+% Reduced model priors for comparison
+PC{1} = pC; PC{1}.dk = 0;    % Reduced: identical observers
+PC{2} = pC; PC{2}.da = 0;    % Reduced: identical systems
+
+%% === MODEL INVERSION & REDUCTION ===
+
+% Run Laplace inversion
+LAP_IO = spm_LAP(IO);
+F_IO   = RedMod(LAP_IO, PC);
+
+subplot(2,2,3)
+bar(F_IO)
+title('C: Model Evidence (IO Data)')
+
+LAP_IS = spm_LAP(IS);
+F_IS   = RedMod(LAP_IS, PC);
+
+subplot(2,2,4)
+bar(F_IS)
+title('D: Model Evidence (IS Data)')
+
+%% === PLOT PROBABILITIES (INSETS) ===
+figure
+subplot(2,2,1)
+bar(spm_softmax(F_IO(:)))
+title('C inset: Posterior Probabilities (IO)')
+p_IO = spm_softmax(F_IO(:));
+
+subplot(2,2,2)
+bar(spm_softmax(F_IS(:)))
+title('D inset: Posterior Probabilities (IS)')
+p_IS = spm_softmax(F_IS(:));
+
+%% === REDUCED MODEL COMPARISON FUNCTION ===
+function F = RedMod(LAP, PC)
+% Compare reduced models using variational free energy
+
+qE = LAP.qP.P{1};       % Posterior estimates
+qC = LAP.qP.C;          
+pE = LAP.M(1).pE;       % Prior means
+pC = LAP.M(1).pC;       % Prior covariance
+
+for m = 1:numel(PC)
+    rC = diag(spm_vec(PC{m}));
+    F(m,1) = spm_log_evidence(qE, qC, pE, pC, pE, rC);
+end
+
+F = F - min(F);         % Normalize for numerical stability
+end
