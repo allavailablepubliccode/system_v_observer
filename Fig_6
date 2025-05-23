@@ -1,8 +1,5 @@
-%% create_fig6_empirical_signals.m
+%% Generate Figure 6
 % -------------------------------------------------------------------------
-% This script reproduces Figure 6 from the manuscript:
-% "Disambiguating System and Observer Effects in Multimodal Neuroimaging Using Stochastic Dynamics"
-%
 % It visualizes simultaneously recorded LFP and iEEG signals for each of
 % the 16 subjects, taken from the right hippocampus during a movie task.
 % Each subplot shows the z-scored LFP (black) and iEEG (red) time series 
