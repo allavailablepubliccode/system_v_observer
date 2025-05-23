@@ -1,0 +1,93 @@
+clear; clc; close all; rng(0);
+
+% input and output directories
+ind    = '~/Dropbox/Work/System_Observer/data/lfp_ieeg/lap/';
+nrange  = 2.7:0.01:4;
+subs    = 1:16;
+
+% set parameters a, b, c, and k for the forward generative model stage
+% these remain fixed for the 4 variations: identical observers/systems
+% with/without noise
+pE.a    = -7/2;
+pE.b    =  1/64;
+pE.c    =  11/4;
+pE.k    =  9/8;
+pE.da   =  0;
+pE.dk   =  0;
+pE.s1   =  0;
+pE.s2   =  0;
+
+pC      = spm_zeros(pE);
+pC.da   = 1;
+pC.dk   = 1;
+pC.s1   = 1;
+pC.s2   = 1;
+
+PC{1}   = pC; PC{1}.dk = 0;
+PC{2}   = pC; PC{2}.da = 0;
+
+% cycle through subjects
+for ii = 1:numel(subs)
+    subject = subs(ii);
+    for jj = 1:numel(nrange)
+        noise = nrange(jj);
+
+        in_file = [ind 'subject_' num2str(subject) '_noise_' num2str(noise) '.mat']; % output directory
+
+        if ~exist(in_file)
+            continue
+        end
+
+        clear LAP
+        load(in_file, 'LAP');          % save model inversion
+
+        F(ii,jj,:) = RedMod(LAP, PC);
+
+    end
+end
+
+figure
+for ii = 1:numel(subs)
+    subplot(4,4,ii)
+    temp = squeeze(F(ii,:,:));
+
+    temp2 = sum(temp');
+    temp2 = find(temp2 == 0);
+
+    temp(temp2,:) = [];
+
+    ntemp = nrange;
+    ntemp(temp2) = [];
+
+    clear p
+    for jj = 1:size(temp,1)
+        temp2 = temp(jj,:);
+        temp2 = spm_softmax(temp2(:));
+        p(jj) = temp2(2);
+    end
+    plot(ntemp,p,'k.')
+    hold on
+    plot(2.4:0.01:4,ones(size(2.4:0.01:4))*0.95,'g')
+    plot(2.4:0.01:4,ones(size(2.4:0.01:4))*0.99,'g')
+    plot(2.4:0.01:4,ones(size(2.4:0.01:4))*0.999,'g')
+    hold off
+
+    axis([2.4 4 0.91 1.01])
+    
+    drawnow
+
+end
+
+
+function F = RedMod(LAP, PC)
+qE = LAP.qP.P{1};
+qC = LAP.qP.C;
+pE = LAP.M(1).pE;
+pC = LAP.M(1).pC;
+for m = 1:numel(PC)
+    rC = diag(spm_vec(PC{m}));
+    F(m,1) = spm_log_evidence(qE,qC,pE,pC,pE,rC);
+end
+F = F - min(F);
+end
+
