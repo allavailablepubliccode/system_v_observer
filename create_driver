@@ -1,0 +1,47 @@
+function driver = create_driver(N)
+% CREATE_DRIVER  Generate scene-based input with structured noise.
+%
+% This function constructs a stimulus-like driver signal with piecewise constant
+% segments (representing scenes) and superimposed Gaussian noise. The result is
+% a regressor capturing both slow and fast fluctuations.
+%
+% INPUT:
+%   N        - number of time points to generate
+%
+% OUTPUT:
+%   driver   - 1 x N input vector (scene signal + noise)
+%
+% NOTE:
+%   You must manually specify the path to 'scenecut_info.csv' on your machine.
+
+    targ_fs = 250;  % Target sampling rate in Hz
+
+    % ======== USER: Set the path to your scene transition file ==============
+    scene_file = '~/Dropbox/Work/System_Observer/data/lfp_ieeg/scenecut_info.csv';
+    % ========================================================================
+
+    % Load scene transition times (in seconds), convert to sample indices
+    scene_cuts = readmatrix(scene_file);
+    scene_samples = round(scene_cuts * targ_fs);
+    scene_samples = scene_samples(scene_samples > 1 & scene_samples < N);
+
+    % Define scene boundaries and number of scenes
+    scene_boundaries = unique([1, scene_samples(:)', N + 1]);
+    n_scenes = length(scene_boundaries) - 1;
+
+    % Assign random value to each scene (slow component)
+    rng(0);  % Reproducible results
+    base = zeros(1, N);
+    scene_values = rand(1, n_scenes) * 2 - 1;  % Uniform in [-1, 1]
+
+    for s = 1:n_scenes
+        base(scene_boundaries(s):scene_boundaries(s+1)-1) = scene_values(s);
+    end
+
+    % Add structured noise (fast fluctuations)
+    noise = 0.5 * randn(1, N);  % Gaussian noise, std dev = 0.5
+    driver = base + noise;
+
+    % Apply optional smoothing (Gaussian filter, window = 5 samples)
+    driver = smoothdata(driver, 'gaussian', 5);
+end
