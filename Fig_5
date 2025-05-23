@@ -1,0 +1,154 @@
+%% create_fig5_stochastic_demo.m
+% -------------------------------------------------------------------------
+% This script replicates Figure 5 from the manuscript:
+% "Disambiguating System and Observer Effects in Multimodal Neuroimaging Using Stochastic Dynamics"
+%
+% It generates synthetic neural time series under two generative scenarios:
+%  A) Identical observers (system differences)
+%  B) Identical systems (observer differences)
+% but this time includes stochastic noise in the input (to test the
+% hypothesis that noise improves model identifiability).
+%
+% Model inversion is then performed to compare evidence between two
+% reduced models.
+% -------------------------------------------------------------------------
+
+clear; clc; close all; warning('off','all'); rng(0);
+
+%% Simulation parameters
+N       = 1000;       % Number of timepoints
+pvr     = 1;          % Prior variance for Bayesian model reduction
+
+%% Generate inputs (2D: structured + noise)
+U       = create_driver(N);       % Structured input (scene-style)
+U(2,:)  = randn(1, N);            % White noise input (diagnostic probe)
+
+%% Define embedding and model structure
+E.n     = 4;      % Embedding dimension
+E.d     = 1;      % Delay embedding
+E.nN    = 8;      % Iterations
+E.s     = 1/8;    % State smoothness
+E.dt    = 1/16;   % Integration step
+M(1).E  = E;
+
+% Initial conditions
+x.x     = 0;
+x.xt    = 0;
+M(1).x  = x;
+
+%% Define system dynamics
+% Equations of motion for latent states x and x~ (differing in Jacobian)
+% Both states receive the same structured input v(1) and independent noise v(2)
+M(1).f = @(x, v, P) [P.a         * x.x  + P.b * v(1) + P.s1 * v(2);
+                    (P.a + P.da) * x.xt + P.b * v(1) + P.s2 * v(2)];
+
+%% Define nonlinear observer functions
+% Both observers are tanh nonlinearities with different gains
+M(1).g = @(x, v, P) [P.c * tanh(P.k          * x.x);
+                    P.c * tanh((P.k + P.dk) * x.xt)];
+
+%% Set forward model parameters (common across conditions)
+P.a   = -7/2;
+P.b   =  1/64;
+P.c   = 11/4;
+P.k   =  9/8;
+P.s1  = 1/64;
+P.s2  = 2/64;
+
+% Model noise precisions
+M(1).V = exp(149/16);    % Observation precision
+M(1).W = exp(149/16);    % State precision
+M(2).v = [exp(6), exp(6)];  % Initial state precision
+M(2).V = exp(149/16);    % Input precision
+
+%% === A) IDENTICAL OBSERVERS (system differences only) ===
+P.da    = 2.5;
+P.dk    = 0;
+M(1).pE = P;
+IO      = spm_DEM_generate(M, U, P);
+
+%% === B) IDENTICAL SYSTEMS (observer differences only) ===
+P.da    = 0;
+P.dk    = -1.2;
+M(1).pE = P;
+IS      = spm_DEM_generate(M, U, P);
+
+%% === Plot generated synthetic time series ===
+figure
+subplot(2,2,1)
+plot(IO.Y')
+title('A: Identical Observers (System difference)')
+
+subplot(2,2,2)
+plot(IS.Y')
+title('B: Identical Systems (Observer difference)')
+
+%% === MODEL INVERSION SETUP ===
+
+% Prior mean (null hypothesis: no differences)
+pE      = P;
+pE.da   = 0;
+pE.dk   = 0;
+pE.s1   = 0;
+pE.s2   = 0;
+M(1).pE = pE;
+
+% Prior covariance matrix for model parameters
+pC      = spm_zeros(pE);
+pC.da   = 1;
+pC.dk   = 1;
+pC.s1   = 1;
+pC.s2   = 1;
+M(1).pC = diag(spm_vec(pC)) * pvr;
+
+% Copy full models and inputs
+IO.M = M; IO.U = U;
+IS.M = M; IS.U = U;
+
+% Reduced models: constrain one parameter set at a time
+PC{1} = pC; PC{1}.dk = 0;   % Reduced: identical observers
+PC{2} = pC; PC{2}.da = 0;   % Reduced: identical systems
+
+%% === Invert and compare models ===
+
+LAP_IO = spm_LAP(IO);
+F_IO   = RedMod(LAP_IO, PC);
+
+subplot(2,2,3)
+bar(F_IO)
+title('C: Model Evidence (IO Data)')
+
+LAP_IS = spm_LAP(IS);
+F_IS   = RedMod(LAP_IS, PC);
+
+subplot(2,2,4)
+bar(F_IS)
+title('D: Model Evidence (IS Data)')
+
+%% === Posterior probabilities for insets ===
+
+figure
+subplot(2,2,1)
+bar(spm_softmax(F_IO(:)))
+title('C inset: Posterior Probabilities (IO)')
+p_IO = spm_softmax(F_IO(:));
+
+subplot(2,2,2)
+bar(spm_softmax(F_IS(:)))
+title('D inset: Posterior Probabilities (IS)')
+p_IS = spm_softmax(F_IS(:));
+
+%% === Function: Compare reduced models using log evidence ===
+function F = RedMod(LAP, PC)
+    qE = LAP.qP.P{1};    % Posterior mean
+    qC = LAP.qP.C;       % Posterior covariance
+    pE = LAP.M(1).pE;    % Prior mean
+    pC = LAP.M(1).pC;    % Prior covariance
+
+    for m = 1:numel(PC)
+        rC = diag(spm_vec(PC{m}));
+        F(m,1) = spm_log_evidence(qE, qC, pE, pC, pE, rC);
+    end
+
+    F = F - min(F);      % Normalize evidence
+end
