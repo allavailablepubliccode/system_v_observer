@@ -1,0 +1,84 @@
+%% preprocess_empirical_data.m
+% -----------------------------------------------------------
+% This script extracts, preprocesses, and plots simultaneously recorded 
+% LFP and iEEG signals from the right hippocampus of one subject. 
+%
+% It reproduces **Figure 2** from the paper:
+% "Disambiguating System and Observer Effects in Multimodal Neuroimaging Using Stochastic Dynamics"
+%
+% -----------------------------------------------------------
+
+clear; clc; close all; rng(0);
+
+%% PARAMETERS
+
+orig_fs = 1000;             % Original sampling rate (Hz)
+targ_fs = 250;              % Target sampling rate (Hz)
+ds      = orig_fs / targ_fs; % Downsampling factor
+tmin    = 1;                % Start index (in downsampled samples)
+tmax    = 1000;             % End index (in downsampled samples)
+
+%% USER-SPECIFIED FILE LOCATIONS (EDIT THESE)
+% -----------------------------------------------------------
+% These paths are local to the author's machine.
+% YOU MUST REPLACE THESE with paths to your own copies of the data files.
+
+scene_file  = 'REPLACE_WITH_PATH/scenecut_info.csv';           % CSV file with scene boundaries (optional)
+hippo_idx   = 'REPLACE_WITH_PATH/right_hippocampus_indices.mat'; % .mat file with ROI indices
+base_dir    = 'REPLACE_WITH_PATH/mat/';                         % Folder containing subject data files
+subject_file = 'sub_CS41_P41CSR1.mat';                          % Name of the subject .mat file
+% -----------------------------------------------------------
+
+in_file  = fullfile(base_dir, subject_file);  % Full path to input data
+
+%% LOAD DATA
+
+% Load hippocampal ROI indices (expecting variable `indices`)
+load(hippo_idx);  
+
+% Load subject data (expecting variables `LFP_micro` and `LFP_macro`)
+load(in_file);    
+
+% Extract and average signals in right hippocampus
+mic = mean(LFP_micro(:, double(indices{1}.micro))', 1);  % LFP (micro)
+mac = mean(LFP_macro(:, double(indices{1}.macro))', 1);  % iEEG (macro)
+
+%% PREPROCESSING
+
+% Downsample to target rate (e.g., 250 Hz)
+mic = downsample(mic, ds);
+mac = downsample(mac, ds);
+
+% Normalize (z-score)
+mic = zscore(mic);
+mac = zscore(mac);
+
+% Match signal lengths
+N = min(length(mic), length(mac));
+mic = mic(1:N);
+mac = mac(1:N);
+
+% Truncate to specified analysis window (first 1000 timepoints)
+Tmax = min(tmax, N);
+Tmin = max(1, tmin);
+mic = mic(Tmin:Tmax);
+mac = mac(Tmin:Tmax);
+
+% Combine signals into 2 × T matrix
+Y = [mic; mac];
+
+%% PLOT (REPRODUCES FIGURE 2)
+
+figure
+set(gcf, 'Position', [11 107 1014 383]);
+plot(Y(1, :), 'k'); hold on;
+plot(Y(2, :), 'r');
+legend({'LFP (micro)', 'iEEG (macro)'});
+xlabel('Time (samples @250 Hz)');
+ylabel('Z-scored amplitude');
+title('Hippocampal LFP and iEEG Signals (First 1000 Timepoints)');
+hold off;
+
+% Optional: Save figure as vector PDF
+% set(gcf, 'Renderer', 'painters');
+% print(gcf, 'REPLACE_WITH_PATH/empirical_example.pdf', '-dpdf', '-vector');
