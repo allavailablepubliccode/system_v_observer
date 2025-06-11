@@ -1,0 +1,107 @@
+% =========================================================================
+% Figure 6 (Part 2): Bayesian Model Reduction Across Subjects
+% Author: Erik D. Fagerholm
+% Associated with manuscript: "Noise as a diagnostic tool: Distinguishing
+% System / Device Effects in Multimodal Neuroimaging"
+%
+% This script loads subject-level LAP model inversions (from Part 1) and
+% performs Bayesian model reduction to compare:
+%   - Reduced model 1: Identical observers (only system differs)
+%   - Reduced model 2: Identical systems (only observer differs)
+%
+% Outputs:
+%   - Bar plots of relative variational free energy (VFE) per subject
+%   - Corresponding posterior model probabilities (softmax of VFE)
+%
+% NOTE: Requires SPM12.
+% =========================================================================
+
+clear; clc; close all; rng(0);
+
+% -------------------------
+% Input configuration
+% -------------------------
+ind   = '~/InputDir/';  % input LAP directory
+noise = 6;                   % noise level used during inversion
+subs  = 1:16;                % subject indices
+
+% -------------------------
+% Base parameter structure (same as used in inversion)
+% -------------------------
+pE.a  = 0; pE.b  = 0; pE.c  = 1; pE.k  = 0;
+pE.da = 0; pE.dk = 0; pE.s1 = 0; pE.s2 = 0;
+pC    = spm_ones(pE);  % uniform prior covariance
+
+% -------------------------
+% Define reduced model priors
+% -------------------------
+% PC{1}: identical observers → fix dk = 0
+% PC{2}: identical systems   → fix da = 0
+PC{1} = pC; PC{1}.dk = 0;
+PC{2} = pC; PC{2}.da = 0;
+
+% -------------------------
+% Model reduction across subjects
+% -------------------------
+for ii = 1:numel(subs)
+    subject = subs(ii);
+    in_file = [ind 'subject_' num2str(subject) '_noise_' num2str(noise) '.mat'];
+
+    if ~exist(in_file, 'file')
+        warning('Missing file for subject %d, skipping.', subject)
+        continue
+    end
+
+    % Load subject-level model
+    clear LAP
+    load(in_file, 'LAP');
+
+    % Compute model evidence for each reduced model
+    F(ii, :) = RedMod(LAP, PC);  % relative free energy
+end
+
+% -------------------------
+% Plot raw model evidence (VFE)
+% -------------------------
+figure
+set(gcf, 'position', [54 1 767 536])
+for ii = 1:numel(subs)
+    subplot(4, 4, ii)
+    bar(squeeze(F(ii,:))')
+    title(['Subject ' num2str(ii)])
+    ylabel('ΔVFE')
+    xticklabels({'IO', 'IS'})
+end
+
+% -------------------------
+% Plot posterior probabilities (softmax of VFE)
+% -------------------------
+figure
+set(gcf, 'position', [54 1 767 536])
+for ii = 1:numel(subs)
+    subplot(4, 4, ii)
+    bar(spm_softmax(squeeze(F(ii,:))'))
+    title(['Subject ' num2str(ii)])
+    ylabel('p(model)')
+    xticklabels({'IO', 'IS'})
+    ylim([0 1])
+end
+
+% =========================================================================
+% Helper Function: RedMod
+% =========================================================================
+function F = RedMod(LAP, PC)
+    % RedMod: Computes model evidence for each reduced model using VFE
+    qE = LAP.qP.P{1};        % posterior means
+    qC = LAP.qP.C;           % posterior covariance
+    pE = LAP.M(1).pE;        % prior means
+    pC = LAP.M(1).pC;        % prior covariance
+
+    for m = 1:numel(PC)
+        rC = diag(spm_vec(PC{m}));  % reduced prior covariance (fixing some params)
+        F(m,1) = spm_log_evidence(qE, qC, pE, pC, pE, rC);
+    end
+
+    % Normalize VFE: set minimum to zero
+    F = F - min(F);
+end
