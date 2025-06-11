@@ -1,0 +1,61 @@
+function driver = create_driver(N)
+% =========================================================================
+% CREATE_DRIVER generates a synthetic input regressor with structured
+% scene-based transitions and added noise. Used to simulate exogenous input
+% in generative models (e.g., Figures 3, 4, 5, 6 in the manuscript).
+%
+% INPUT:
+%   N        - total number of time points (e.g., 1000)
+%
+% OUTPUT:
+%   driver   - 1 x N vector combining slow scene transitions + fast noise
+%
+% REQUIREMENTS:
+%   - `scenecut_info.csv` must exist and contain scene cut times in seconds.
+%   - Assumes a target sampling rate of 250 Hz for conversion.
+%
+% AUTHOR:
+%   Erik D. Fagerholm
+% =========================================================================
+
+    % -------------------------
+    % Settings
+    % -------------------------
+    targ_fs = 250;  % Target sampling rate in Hz
+
+    % -------------------------
+    % Load scene cut information
+    % -------------------------
+    scene_file  = '~/Dropbox/Work/System_Observer/data/lfp_ieeg/scenecut_info.csv';
+    scene_cuts  = readmatrix(scene_file);  % seconds
+
+    % Convert to sample indices and clip to valid range
+    scene_samples = round(scene_cuts * targ_fs);
+    scene_samples = scene_samples(scene_samples > 1 & scene_samples < N);
+
+    % Define boundaries of scenes
+    scene_boundaries = unique([1, scene_samples(:)', N + 1]);
+    n_scenes = length(scene_boundaries) - 1;
+
+    % -------------------------
+    % Generate base signal: one value per scene
+    % -------------------------
+    rng(0);  % For reproducibility
+    base = zeros(1, N);
+    scene_values = rand(1, n_scenes) * 2 - 1;  % Random values in [-1, 1]
+
+    for s = 1:n_scenes
+        idx_start = scene_boundaries(s);
+        idx_end   = scene_boundaries(s + 1) - 1;
+        base(idx_start:idx_end) = scene_values(s);
+    end
+
+    % -------------------------
+    % Add noise (fast fluctuations)
+    % -------------------------
+    noise  = 0.5 * randn(1, N);  % Gaussian noise
+    driver = base + noise;
+
+    % Smooth the result to produce realistic input dynamics
+    driver = smoothdata(driver, 'gaussian', 5);
+end
