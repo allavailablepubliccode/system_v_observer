@@ -1,0 +1,135 @@
+% =========================================================================
+% Figure 6 (Part 1): Model Inversion for All Subjects (Create LAP files)
+% Author: Erik D. Fagerholm
+% Associated with manuscript: "Noise as a diagnostic tool: Distinguishing
+% System / Device Effects in Multimodal Neuroimaging"
+%
+% This script loads preprocessed micro/macro HFB data from 16 subjects and 
+% performs model inversion using SPM's variational Laplace (spm_LAP).
+% The model includes latent states (x, x~) and observer mappings (g, g~).
+% Output is a LAP structure per subject, saved for use in Part 2 (Figure 6).
+%
+% NOTE: You must update the `base` and `outd` paths for your machine.
+% =========================================================================
+
+clear; clc; close all; rng(0);
+
+% -------------------------
+% File paths (EDIT THESE)
+% -------------------------
+base = '~/PathDir/';   % Input .mat data
+outd = '~/OutDir/';   % Output .mat LAPs
+
+% Electrode index structure (contains right hippocampus channel assignments)
+load('~/UserPath/right_hippocampus_indices.mat')
+
+% -------------------------
+% Parameters
+% -------------------------
+subs    = 1:16;        % Subject IDs
+noise   = 6;           % Precision hyperparameter (exp(noise))
+orig_fs = 1000;        % Original sampling rate
+targ_fs = 250;         % Downsampled rate
+ds      = orig_fs / targ_fs;
+tmin    = 1;
+tmax    = 1000;        % Use first 4 seconds (at 250 Hz)
+pvr     = 1;           % Prior variance scaling
+
+% -------------------------
+% Create model template (DEM.M)
+% -------------------------
+% Integration settings
+E.n     = 4;       % Embedding dimension
+E.d     = 1;       % Data embedding
+E.nN    = 8;       % DEM iterations
+E.s     = 1/8;     % Fluctuation smoothness
+E.dt    = 1/16;    % Integration step size
+M(1).E  = E;
+
+% Initial state values
+x.x     = 0;
+x.xt    = 0;
+M(1).x  = x;
+
+% State dynamics (2 systems, possibly different via P.da)
+M(1).f = @(x,v,P) [P.a * x.x         + P.b * v(1) + P.s1 * v(2);
+                   (P.a + P.da) * x.xt + P.b * v(1) + P.s2 * v(2)];
+
+% Observer functions (possibly different via P.dk)
+M(1).g = @(x,v,P) [P.c * tanh(P.k          * x.x);
+                   P.c * tanh((P.k + P.dk) * x.xt)];
+
+% Parameter initialization
+pE.a  = 0; pE.b  = 0; pE.c  = 1; pE.k  = 0;
+pE.da = 0; pE.dk = 0; pE.s1 = 0; pE.s2 = 0;
+M(1).pE = pE;
+
+% Prior covariance (diagonal, uniform variance across parameters)
+pC = spm_ones(pE);  
+M(1).pC = diag(spm_vec(pC)) * pvr;
+
+% Initial state precision
+M(2).v = [exp(6), exp(6)];
+
+% -------------------------
+% Shared Inputs (U)
+% -------------------------
+U       = create_driver(tmax);        % Structured scene-based input
+U(2,:)  = randn(1, tmax);             % Add noise input (2nd row)
+DEM.U   = U;
+
+% -------------------------
+% Loop through subjects
+% -------------------------
+for ii = 1:numel(subs)
+    subject = subs(ii);
+    fprintf('Processing subject %d...\n', subject)
+
+    % Load micro and macro signals
+    clear LFP_macro LFP_micro
+    load([base 'subject_' num2str(subject) '.mat']);
+
+    % Average signals across channels in right hippocampus
+    mic = mean(LFP_micro(:, double(indices{subject}.micro))', 1);
+    mac = mean(LFP_macro(:, double(indices{subject}.macro))', 1);
+
+    % Downsample both signals to 250 Hz
+    mic = downsample(mic, ds);
+    mac = downsample(mac, ds);
+
+    % Truncate to equal length and window of interest
+    N   = min(length(mic), length(mac));
+    mic = mic(1:N);
+    mac = mac(1:N);
+    Tmax = min(tmax, N);
+    Tmin = max(tmin, 1);
+    mic  = mic(Tmin:Tmax);
+    mac  = mac(Tmin:Tmax);
+
+    DEM.Y = [mic; mac];  % Two-channel time series
+
+    % Output file name
+    out_file = [outd 'subject_' num2str(subject) '_noise_' num2str(noise) '.mat'];
+
+    if exist(out_file, 'file')
+        fprintf('Already exists. Skipping: %s\n', out_file);
+        continue
+    end
+
+    % Set observation and process precision
+    M(1).V = exp(noise);  % Observation noise
+    M(1).W = exp(noise);  % State noise
+    M(2).V = exp(noise);  % Input precision
+
+    % Assign model
+    DEM.M = M;
+
+    % Run model inversion
+    LAP = spm_LAP(DEM);
+
+    % Save to disk
+    save(out_file, 'LAP');
+
+    fprintf('Saved: %s\n', out_file)
+end
+
