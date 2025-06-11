@@ -80,9 +80,3 @@ title('Final Driver Signal with Fast Fluctuations')
 xlabel('Time (samples)')
 ylabel('Amplitude')
 xlim([0 N])
-
-% -------------------------
-% (Optional) Export as vector PDF
-% -------------------------
-% set(gcf, 'Renderer', 'painters');
-% print(gcf, '~/OutputPath/Fig3.pdf', '-dpdf', '-vector');
