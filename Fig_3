@@ -1,69 +1,88 @@
-%% Generate Figure 3
-% -----------------------------------------------------------
-% This script constructs a driver signal for simulations, mimicking 
-% slow scene-based fluctuations and fast stochastic perturbations.
-% -----------------------------------------------------------
+% =========================================================================
+% Figure 3 Generator: Constructing Structured Input Driver Signal
+% Author: Erik D. Fagerholm
+% Associated with manuscript: "Noise as a diagnostic tool: Distinguishing
+% System / Device Effects in Multimodal Neuroimaging"
+%
+% This script creates the structured exogenous input (driver signal) used
+% in synthetic data generation. It reflects both:
+%   - slow fluctuations: piecewise-constant values per scene
+%   - fast fluctuations: added Gaussian noise
+%
+% Output is a 1000-sample driver shown as two subplots:
+%   (Top) Scene-wise base signal (slow)
+%   (Bottom) Final driver with added noise and smoothing
+%
+% NOTE: You must update `scene_file` to your own path.
+% =========================================================================
 
-clear; clc; close all; rng(0);
+clear; clc; close all; rng(0);  % Reset workspace and seed RNG
 
-%% PARAMETERS
+% -------------------------
+% Settings
+% -------------------------
+N       = 1000;     % Number of timepoints
+targ_fs = 250;      % Sampling rate in Hz
 
-N       = 1000;     % Total number of timepoints
-targ_fs = 250;      % Sampling rate (Hz) used in simulations
+% -------------------------
+% Load scene transition info
+% -------------------------
+% This file should contain scene cut timestamps in seconds
+scene_file = '~/UserPath/scenecut_info.csv';
+scene_cuts = readmatrix(scene_file);
 
-%% USER-SPECIFIED FILE PATH (EDIT THIS)
-% -----------------------------------------------------------
-% Path to CSV file containing scene transition times (in seconds).
-% YOU MUST REPLACE THIS with the path to your own copy.
+% Convert scene cut times to sample indices
+scene_samples = round(scene_cuts * targ_fs);
+scene_samples = scene_samples(scene_samples > 1 & scene_samples < N);  % Clip to valid range
 
-scene_file = 'REPLACE_WITH_PATH/scenecut_info.csv';
-% -----------------------------------------------------------
+% Define boundaries between scenes
+scene_boundaries = unique([1, scene_samples(:)', N + 1]);
+n_scenes = length(scene_boundaries) - 1;
 
-%% LOAD SCENE CUT INFORMATION
-
-scene_cuts = readmatrix(scene_file);                    % Scene transitions (in seconds)
-scene_samples = round(scene_cuts * targ_fs);           % Convert to sample indices
-scene_samples = scene_samples(scene_samples > 1 & scene_samples < N);  % Keep valid samples only
-
-scene_boundaries = unique([1, scene_samples(:)', N + 1]);  % Define start/end points for each segment
-n_scenes = length(scene_boundaries) - 1;                  % Total number of scenes
-
-%% BUILD BASE INPUT: Piecewise constant signal with random values
-
-rng(0);  % For reproducibility
-base = zeros(1, N);                   % Initialize base signal
-scene_values = rand(1, n_scenes) * 2 - 1;  % Random value between -1 and 1 per scene
+% -------------------------
+% Create base driver (slow fluctuations)
+% -------------------------
+rng(0);  % Ensure same random values every run
+base = zeros(1, N);
+scene_values = rand(1, n_scenes) * 2 - 1;  % Random value in [-1, 1] per scene
 
 for s = 1:n_scenes
     idx_start = scene_boundaries(s);
     idx_end   = scene_boundaries(s + 1) - 1;
-    base(idx_start:idx_end) = scene_values(s);  % Assign value to scene interval
+    base(idx_start:idx_end) = scene_values(s);
 end
 
-%% ADD STRUCTURED NOISE
+% -------------------------
+% Add structured noise (fast fluctuations)
+% -------------------------
+noise  = 0.5 * randn(1, N);  % Additive Gaussian noise
+driver = base + noise;
 
-noise = 0.5 * randn(1, N);            % Gaussian white noise
-driver = base + noise;                % Combine base signal with noise
-driver = smoothdata(driver, 'gaussian', 5);  % Optional smoothing (Gaussian window)
+% Optional: smooth to reflect realistic neural inputs
+driver = smoothdata(driver, 'gaussian', 5);
 
-%% PLOT (REPRODUCES FIGURE 3)
+% -------------------------
+% Plot results
+% -------------------------
+figure
+set(gcf, 'position', [1 73 1014 464])  % Set figure size
 
-figure;
-set(gcf, 'Position', [1 73 1014 464]);
+subplot(2,1,1)
+plot(base, 'k')
+title('Scene-Based Base Signal')
+xlabel('Time (samples)')
+ylabel('Amplitude')
+xlim([0 N])
 
-subplot(2,1,1);
-plot(base, 'k');
-ylabel('Base Input');
-title('Scene-Based Input Signal (Slow Fluctuations)');
-xlim([1, N]);
+subplot(2,1,2)
+plot(driver, 'k')
+title('Final Driver Signal with Fast Fluctuations')
+xlabel('Time (samples)')
+ylabel('Amplitude')
+xlim([0 N])
 
-subplot(2,1,2);
-plot(driver, 'k');
-ylabel('Final Driver');
-title('Final Driver Signal (Base + Noise)');
-xlabel('Time (samples @250 Hz)');
-xlim([1, N]);
-
-% Optional: Save figure as vector PDF
+% -------------------------
+% (Optional) Export as vector PDF
+% -------------------------
 % set(gcf, 'Renderer', 'painters');
-% print(gcf, 'REPLACE_WITH_PATH/driver_figure.pdf', '-dpdf', '-vector');
+% print(gcf, '~/OutputPath/Fig3.pdf', '-dpdf', '-vector');
