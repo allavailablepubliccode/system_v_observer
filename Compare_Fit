@@ -1,0 +1,124 @@
+function compare_fit(LAP)
+% =========================================================================
+% COMPARE_FIT evaluates how well the model output fits empirical data.
+%
+% This function compares the model-predicted signal to the observed data
+% for the second channel (e.g., iEEG) in a LAP structure produced by SPM's
+% model inversion (spm_LAP). It reports fit statistics in three forms:
+%   - Raw
+%   - Z-scored
+%   - Mean–variance matched
+%
+% INPUT:
+%   LAP - SPM LAP structure with fields:
+%         .Y        - observed data (2 x T)
+%         .qU.v{1}  - predicted state trajectories (2 x T)
+%
+% OUTPUT:
+%   Prints r, MSE, and R^2 for each form. Optionally plots comparisons.
+%
+% AUTHOR:
+%   Erik D. Fagerholm
+% =========================================================================
+
+    % -------------------------
+    % Extract data and prediction
+    % -------------------------
+    Y   = LAP.Y(2,:)';            % Observed signal (2nd channel)
+    fit = LAP.qU.v{1}(2,:)';      % Predicted model output (2nd channel)
+
+    % -------------------------
+    % Sanity check
+    % -------------------------
+    if length(Y) ~= length(fit)
+        error('Mismatch: LAP.Y and LAP.qU.v{1} must have equal length.');
+    end
+
+    % -------------------------
+    % Z-score both signals
+    % -------------------------
+    Y_z   = zscore(Y);
+    fit_z = zscore(fit);
+
+    % -------------------------
+    % Plot z-scored signals
+    % -------------------------
+    figure;
+    plot(Y_z, 'k'); hold on;
+    plot(fit_z, 'r');
+    title('Z-scored Fit');
+    legend('Empirical', 'Model');
+
+    % -------------------------
+    % Mean–variance scaling
+    % -------------------------
+    scale      = std(Y) / std(fit);
+    offset     = mean(Y) - scale * mean(fit);
+    fit_scaled = fit * scale + offset;
+
+    % Convert to full double (if symbolic or sparse)
+    scale      = full(scale);
+    offset     = full(offset);
+    fit_scaled = full(fit_scaled);
+
+    % -------------------------
+    % Compute statistics
+    % -------------------------
+    % -- Raw --
+    r_raw   = corr(Y, fit);
+    mse_raw = mean((Y - fit).^2);
+    r2_raw  = 1 - sum((Y - fit).^2) / sum((Y - mean(Y)).^2);
+
+    % -- Z-scored --
+    r_z   = corr(Y_z, fit_z);
+    mse_z = mean((Y_z - fit_z).^2);
+    r2_z  = 1 - sum((Y_z - fit_z).^2) / sum((Y_z - mean(Y_z)).^2);
+
+    % -- Scaled --
+    r_s   = corr(Y, fit_scaled);
+    mse_s = mean((Y - fit_scaled).^2);
+    r2_s  = 1 - sum((Y - fit_scaled).^2) / sum((Y - mean(Y)).^2);
+
+    % -------------------------
+    % Print results
+    % -------------------------
+    fprintf('\n=== Fit Statistics ===\n');
+    fprintf('-- Raw --\n');
+    fprintf('  r:   %.4f\n  MSE: %.4f\n  R^2: %.4f\n', r_raw, mse_raw, r2_raw);
+
+    fprintf('-- Z-scored --\n');
+    fprintf('  r:   %.4f\n  MSE: %.4f\n  R^2: %.4f\n', r_z, mse_z, r2_z);
+
+    fprintf('-- Scaled --\n');
+    fprintf('  r:   %.4f\n  MSE: %.4f\n  R^2: %.4f\n', r_s, mse_s, r2_s);
+
+    % -------------------------
+    % Optional: enable this section to show detailed comparison plots
+    % -------------------------
+    %{
+    figure;
+    % 1. Raw comparison
+    subplot(3,1,1);
+    plot(Y, 'k-'); hold on;
+    plot(fit, 'r--');
+    title('Raw Data vs. Model Output');
+    legend('Empirical', 'Model');
+    xlabel('Time'); ylabel('Signal');
+
+    % 2. Z-scored comparison
+    subplot(3,1,2);
+    plot(Y_z, 'k-'); hold on;
+    plot(fit_z, 'r--');
+    title('Z-Scored Comparison');
+    legend('Empirical', 'Model');
+    xlabel('Time'); ylabel('Z-score');
+
+    % 3. Scaled comparison
+    subplot(3,1,3);
+    plot(Y, 'k-'); hold on;
+    plot(fit_scaled, 'b--');
+    title('Mean–Variance Matched');
+    legend('Empirical', 'Model');
+    xlabel('Time'); ylabel('Signal');
+    %}
+end
