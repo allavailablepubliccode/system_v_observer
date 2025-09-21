@@ -1,0 +1,176 @@
+% Generate and invert models for all subjects using LAP (Laplace approximation)
+% Used to generate data for Figure 5
+%
+% Each subject's data is modeled using a simple dynamical system with observer- and system-level parameters.
+% This script performs model inversion via SPM’s spm_LAP, saving the results per subject.
+%
+% === REQUIREMENTS ===
+% - SPM12 installed and added to MATLAB path
+% - Preprocessed .mat files per subject (macro and micro LFP signals)
+% - ROI index file for hippocampal contacts: right_hippocampus_indices.mat
+% - Function: create_driver(N)
+%
+% === USER ACTION ===
+% Update `base`, `outd`, and `load` paths to match your system.
+
+clear; clc; close all; rng(0);
+
+% ---------------------- File Paths ------------------------
+base = 'your_path';    % Input .mat data files
+outd = 'your_path';    % Output directory for LAP files
+load('your_path');  % Contains 'indices'
+
+% ------------------- Subject and Signal Setup -------------
+subs    = 1:16;                  % Subject IDs
+orig_fs = 1000;                 % Original sampling rate (Hz)
+targ_fs = 250;                  % Target downsampled rate (Hz)
+ds      = orig_fs / targ_fs;   % Downsampling factor
+tmin    = 1;                    % Start index (in downsampled space)
+tmax    = 1000;                 % End index (max 1000 samples used)
+pvr     = 0.5;                  % Prior variance scaling (more flexible than pvr=1)
+
+% ---------------------- Model Specification ----------------
+
+% Embedding and temporal dynamics
+E.n     = 4;       % Embedding dimension
+E.d     = 1;       % Delay embedding
+E.nN    = 8;       % Number of Newton iterations per sample
+E.s     = 1/8;     % Smoothness hyperparameter
+E.dt    = 1/16;    % Time step (affects integration resolution)
+M(1).E  = E;
+
+% Initial latent state conditions (x = system, xt = twin)
+x.x     = 0;
+x.xt    = 0;
+M(1).x  = x;
+
+% Equations of motion (f): two coupled latent states (differ by P.da)
+M(1).f = @(x,v,P) [
+    P.a         * x.x  + P.b * v(1) + P.s1 * v(2);
+    (P.a + P.da)* x.xt + P.b * v(1) + P.s2 * v(2)
+];
+
+% Observer function (g): maps latent states to observable signals (differ by P.dk)
+M(1).g = @(x,v,P) [
+    P.c * tanh(P.k          * x.x);
+    P.c * tanh((P.k + P.dk) * x.xt)
+];
+
+% Prior expectations: start at zero (null hypothesis)
+pE.a  = 0;
+pE.b  = 0;
+pE.c  = 1;
+pE.k  = 0;
+pE.da = 0;
+pE.dk = 0;
+pE.s1 = 0;
+pE.s2 = 0;
+M(1).pE = pE;
+
+% Prior covariances: identity scaled by pvr (soft prior)
+pC = spm_ones(pE);
+M(1).pC = diag(spm_vec(pC)) * pvr;
+
+% Second-level priors: variances over input v
+M(2).v = [1 1];   % Prior variances over each input channel (scene + noise)
+
+% ------------------ Structured Input ------------------------
+
+U       = create_driver(tmax);      % Scene-based regressor
+U(2,:)  = randn(1, tmax);           % Add random Gaussian noise as second input
+DEM.U   = U;
+
+% --------------------- Loop over Subjects -------------------
+
+for ii = 1:numel(subs)
+    subject   = subs(ii);
+    out_file  = fullfile(outd, ['subject_' num2str(subject) '.mat']);
+
+    % Uncomment to skip existing subjects
+    % if exist(out_file, 'file'), continue; end
+
+    % --- Load Empirical LFP Data ---
+    clear LFP_macro LFP_micro
+    load(fullfile(base, ['subject_' num2str(subject) '.mat']));
+
+    % Average within right hippocampus (macro and micro separately)
+    mic = mean(LFP_micro(:, double(indices{subject}.micro))', 1);
+    mac = mean(LFP_macro(:, double(indices{subject}.macro))', 1);
+
+    % Downsample both signals
+    mic = downsample(mic, ds);
+    mac = downsample(mac, ds);
+
+    % Truncate to common length and standard window
+    N = min(length(mic), length(mac));
+    mic = mic(1:N); mac = mac(1:N);
+    Tmax = min(tmax, N);
+    mic = mic(tmin:Tmax);
+    mac = mac(tmin:Tmax);
+
+    % Set up observed data
+    DEM.Y = [mic; mac];
+
+    % Assign model
+    DEM.M = M;
+
+    % ----------------- Run Inversion -------------------
+    LAP = spm_LAP(DEM);
+
+    % ----------------- Save Result ---------------------
+    save(out_file, 'LAP');
+end
+
+function driver = create_driver(N)
+% CREATE_DRIVER generates a structured input regressor with noise.
+%
+% This function simulates an input timeseries composed of two components:
+% (1) Low-frequency, block-like structure based on scene transitions (e.g. movie cutpoints).
+% (2) Superimposed high-frequency Gaussian noise.
+% This is used as input for system–observer generative model simulations.
+%
+% INPUT:
+%   N        - Total number of timepoints to generate
+%
+% OUTPUT:
+%   driver   - 1 x N input vector combining structure + noise
+%
+% NOTE:
+%   You must have a file called `scenecut_info.csv` containing cut times
+%   in seconds
+%
+%   If needed, adjust the file path and target sampling rate below.
+
+    % ---------------------- Settings ----------------------
+    targ_fs    = 250;   % Target sampling rate (Hz)
+    scene_file = 'your_path';
+
+    % ---------------------- Load scene transitions ----------------------
+    % These define block-wise changes in the driver (e.g. movie scenes)
+    scene_cuts = readmatrix(scene_file);  % In seconds
+
+    % Convert to sample indices
+    scene_samples = round(scene_cuts * targ_fs);
+    scene_samples = scene_samples(scene_samples > 1 & scene_samples < N);
+
+    % Define scene segment start/end points
+    scene_boundaries = unique([1, scene_samples(:)', N + 1]);
+    n_scenes = numel(scene_boundaries) - 1;
+
+    % ---------------------- Base signal ----------------------
+    % Random constant value per scene block (low frequency structure)
+    rng(0);  % Reproducibility
+    base = zeros(1, N);
+    scene_values = rand(1, n_scenes) * 2 - 1;  % Uniform in [-1, 1]
+
+    for s = 1:n_scenes
+        idx_start = scene_boundaries(s);
+        idx_end   = scene_boundaries(s + 1) - 1;
+        base(idx_start:idx_end) = scene_values(s);
+    end
+
+    % ---------------------- Add noise ----------------------
+    noise  = 0.5 * randn(1, N);              % Fast fluctuations
+    driver = base + noise;                   % Combined input
+    driver = smoothdata(driver, 'gaussian', 5);  % Optional smoothing
+end
