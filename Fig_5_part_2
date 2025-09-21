@@ -1,0 +1,100 @@
+% plot_LAP_model_comparison.m
+% Part 2 of Figure 5: Load precomputed LAP results, apply model reduction
+% to assess evidence for system vs. observer distinctions.
+%
+% Input: LAP files
+% Output: Subject-wise model comparison (raw log-evidence + softmax)
+%
+% === USER ACTION ===
+% Update `ind` path to match your system's LAP directory.
+
+clear; clc; close all; rng(0);
+
+% --------------------- Input Directory ---------------------
+ind = 'your_path';   % LAP files
+subs = 1:16;                                                 % Subject IDs
+
+% ------------------- Prior Setup for Model Reduction --------------------
+% These priors define the "null model" — i.e., both da and dk = 0
+% We'll reduce from the full model inferred in each subject to these two:
+% (1) Only system effects (dk = 0), (2) Only observer effects (da = 0)
+
+% Neutral priors (same as used during inversion)
+pE.a  = 0;
+pE.b  = 0;
+pE.c  = 1;
+pE.k  = 0;
+pE.da = 0;
+pE.dk = 0;
+pE.s1 = 0;
+pE.s2 = 0;
+
+% Prior covariances: all 1s (soft prior)
+pC = spm_ones(pE);
+
+% Construct reduced models:
+% PC{1}: dk = 0 → test for system differences (observer fixed)
+% PC{2}: da = 0 → test for observer differences (system fixed)
+PC{1} = pC; PC{1}.dk = 0;
+PC{2} = pC; PC{2}.da = 0;
+
+% ------------------- Loop Over Subjects --------------------
+F = nan(numel(subs), 2);   % Store model evidence for each subject
+
+for ii = 1:numel(subs)
+    subject = subs(ii);
+    in_file = fullfile(ind, ['subject_' num2str(subject) '.mat']);
+
+    if ~isfile(in_file)
+        warning('Missing file for subject %d: %s', subject, in_file);
+        continue;
+    end
+
+    % Load precomputed model inversion
+    S = load(in_file, 'LAP');
+    LAP = S.LAP;
+
+    % Perform model reduction: compute relative log-evidence
+    F(ii,:) = RedMod(LAP, PC);
+end
+
+% ------------------- Plot Raw Model Evidence ---------------------
+figure('Name','Raw log-evidence (F)', 'Position',[54 1 767 536]);
+for ii = 1:numel(subs)
+    subplot(4,4,ii)
+    bar(squeeze(F(ii,:))', 'FaceColor', [0.2 0.2 0.8])
+    title(sprintf('Subject %d', ii));
+    xticks([1 2]); xticklabels({'System', 'Observer'});
+    ylabel('ΔF');
+end
+
+% ------------------- Plot Posterior Model Probabilities ----------------
+figure('Name','Posterior probabilities', 'Position',[54 1 767 536]);
+for ii = 1:numel(subs)
+    subplot(4,4,ii)
+    p = spm_softmax(squeeze(F(ii,:))');
+    bar(p, 'FaceColor', [0.2 0.8 0.2])
+    axis([0 3 0 1]);
+    title(sprintf('Subject %d', ii));
+    xticks([1 2]); xticklabels({'System', 'Observer'});
+    ylabel('P(model)');
+end
+
+% ------------------- Helper Function: Model Reduction -------------------
+function F = RedMod(LAP, PC)
+    % REDMOD performs Bayesian model reduction for two models:
+    % PC{1}: fixed observer (dk = 0)
+    % PC{2}: fixed system (da = 0)
+
+    qE = LAP.qP.P{1};             % Posterior mean (full model)
+    qC = LAP.qP.C;                % Posterior covariance
+    pE = LAP.M(1).pE;             % Prior mean (full model)
+    pC = LAP.M(1).pC;             % Prior covariance
+
+    for m = 1:numel(PC)
+        rC = diag(spm_vec(PC{m}));   % Reduced model precision
+        F(m,1) = spm_log_evidence(qE, qC, pE, pC, pE, rC);
+    end
+
+    F = F - min(F);   % Normalize (ΔF relative to minimum model)
+end
