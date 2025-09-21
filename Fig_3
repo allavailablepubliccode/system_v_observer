@@ -173,8 +173,7 @@ function driver = create_driver(N)
 %
 % NOTE:
 %   You must have a file called `scenecut_info.csv` containing cut times
-%   in seconds, located at:
-%   ~/Dropbox/Work/System_Observer/data/lfp_ieeg/scenecut_info.csv
+%   in seconds
 %
 %   If needed, adjust the file path and target sampling rate below.
 
