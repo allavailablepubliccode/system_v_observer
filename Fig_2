@@ -1,0 +1,75 @@
+%% Figure 2: Construction of Scene-Based Driver Signal
+% This script generates a synthetic driver composed of slow fluctuations
+% (scene-based) and fast noise, mimicking an exogenous input to a dynamical
+% system. It plots the base driver and the final noisy driver.
+
+clear; clc; close all; rng(0);  % Reset state
+
+%% ========== USER SETUP ==========
+
+% Total number of samples
+N = 1000;
+
+% Target sampling rate (Hz) -- must match preprocessed iEEG data
+targ_fs = 250;
+
+% Path to scene transition file (CSV with times in seconds)
+scene_file = 'your_path';
+
+% ========== Load and Convert Scene Transitions ==========
+
+% Read transition times (in seconds)
+scene_cuts = readmatrix(scene_file);
+
+% Convert to sample indices
+scene_samples = round(scene_cuts * targ_fs);
+
+% Retain only samples within bounds
+scene_samples = scene_samples(scene_samples > 1 & scene_samples < N);
+
+% Scene boundaries = first sample, each transition, final sample
+scene_boundaries = unique([1, scene_samples(:)', N + 1]);
+n_scenes = length(scene_boundaries) - 1;
+
+%% ========== Create Base Driver (Slow Signal) ==========
+
+% Initialize flat signal
+base = zeros(1, N);
+
+% Assign a random constant value to each scene segment
+scene_values = rand(1, n_scenes) * 2 - 1;  % Uniform in [-1, 1]
+
+for s = 1:n_scenes
+    idx_start = scene_boundaries(s);
+    idx_end   = scene_boundaries(s + 1) - 1;
+    base(idx_start:idx_end) = scene_values(s);
+end
+
+%% ========== Add Fast Noise Component ==========
+
+% Generate Gaussian noise
+noise = 0.5 * randn(1, N);  % Std deviation = 0.5
+
+% Final driver = slow scene signal + fast noise
+driver = base + noise;
+
+% Optional: smooth slightly to make visually nicer
+driver = smoothdata(driver, 'gaussian', 5);
+
+%% ========== Plot ==========
+
+figure
+set(gcf, 'Position', [100 100 1014 464])
+
+subplot(2,1,1)
+plot(base, 'k', 'LineWidth', 1)
+ylabel('Base Signal')
+title('Scene-Based Input (Slow Fluctuations)')
+axis tight
+
+subplot(2,1,2)
+plot(driver, 'k', 'LineWidth', 1)
+xlabel('Time (samples)')
+ylabel('Driver Signal')
+title('Driver = Base + Fast Noise')
+axis tight
