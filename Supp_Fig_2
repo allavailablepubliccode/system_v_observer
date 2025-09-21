@@ -1,0 +1,144 @@
+%% Supplementary Figure 2: Multiplicative Noise — System vs Observer Dissociation
+% This script evaluates whether the distinction between system-driven vs
+% observer-driven divergence still holds when inputs include structured +
+% **multiplicative noise**, i.e., noise modulated by the latent state.
+%
+clear; clc; close all; rng(0);
+
+%% ======= Simulation Settings =======
+N   = 1000;     % Number of timepoints
+pvr = 1;        % Prior variance scaling for inversion
+
+% Structured + random input driver
+U = create_driver(N);
+U(2,:) = randn(1, N);  % Second input is Gaussian noise
+
+%% ======= Define Model (SPM DEM Settings) =======
+% SPM model structure (embedding, integration)
+E.n     = 4;
+E.d     = 1;
+E.nN    = 8;
+E.s     = 1/8;
+E.dt    = 1/16;
+M(1).E  = E;
+
+% Initial conditions
+x.x     = 0;
+x.xt    = 0;
+M(1).x  = x;
+
+% ======= Equations of Motion: Multiplicative Noise =======
+% Second input v(2) is multiplied by state — a nonlinear noise term
+M(1).f = @(x,v,P) [P.a * x.x         + P.b * v(1) + P.s1 * x.x  * v(2);
+                  (P.a + P.da) * x.xt + P.b * v(1) + P.s2 * x.xt * v(2)];
+
+% ======= Observer Function =======
+M(1).g = @(x,v,P) [P.c * tanh(P.k          * x.x);
+                   P.c * tanh((P.k + P.dk) * x.xt)];
+
+%% ======= True Parameter Values =======
+P.a  = -7/2;
+P.b  = 1/64;
+P.c  = 11/4;
+P.k  = 9/8;
+P.s1 = (1/64) * 70;    % Gain on noise input (scaled for multiplicative)
+P.s2 = (2/64) * 70;
+
+% Variance settings for observations, states, and inputs
+M(1).V = exp(149/16);
+M(1).W = exp(149/16);
+M(2).v = [exp(6), exp(6)];
+M(2).V = exp(149/16);
+
+%% ======= Case A: Identical Observers (IO), Divergent Systems =======
+P.da    = 2.5;   % system difference
+P.dk    = 0;     % observer identical
+M(1).pE = P;
+IO = spm_DEM_generate(M, U, P);
+
+%% ======= Case B: Identical Systems (IS), Divergent Observers =======
+P.da    = 0;     
+P.dk    = -1.2;  % observer difference
+M(1).pE = P;
+IS = spm_DEM_generate(M, U, P);
+
+%% ======= Model Inversion Setup =======
+pE         = P;
+pE.da      = 0;
+pE.dk      = 0;
+pE.s1      = 0;
+pE.s2      = 0;
+M(1).pE    = pE;
+
+pC         = spm_zeros(pE);
+pC.da      = 1;
+pC.dk      = 1;
+pC.s1      = 1;
+pC.s2      = 1;
+M(1).pC    = diag(spm_vec(pC)) * pvr;
+
+% Package model and input for inversion
+IO.M = M; IO.U = U;
+IS.M = M; IS.U = U;
+
+% Model space: reduced priors to test observer-only vs system-only changes
+PC{1} = pC; PC{1}.dk = 0;   % Reduced model with no observer difference
+PC{2} = pC; PC{2}.da = 0;   % Reduced model with no system difference
+
+%% ======= Inversion: IO Case =======
+LAP_IO = spm_LAP(IO);
+F_IO   = RedMod(LAP_IO, PC);
+
+%% ======= Inversion: IS Case =======
+LAP_IS = spm_LAP(IS);
+F_IS   = RedMod(LAP_IS, PC);
+
+%% ======= Plot Outputs =======
+figure;
+set(gcf,'position',[1 340 1024 300])
+
+subplot(2,2,1);
+plot(IO.Y'); title('A: IO (multiplicative noise)');
+xlabel('Time'); ylabel('Signal');
+
+subplot(2,2,2);
+plot(IS.Y'); title('B: IS (multiplicative noise)');
+xlabel('Time'); ylabel('Signal');
+
+subplot(2,2,3);
+bar(F_IO); title('C: Model comparison (IO)');
+ylabel('F - min(F)');
+xticklabels({'IO','IS'});
+
+subplot(2,2,4);
+bar(F_IS); title('D: Model comparison (IS)');
+ylabel('F - min(F)');
+xticklabels({'IO','IS'});
+
+%% ======= Posterior Probabilities (Insets) =======
+figure;
+set(gcf,'position',[1 340 1024 200])
+
+subplot(2,2,1);
+bar(spm_softmax(F_IO(:)));
+title('C inset: Posterior (IO)');
+ylim([0 1]); xticklabels({'IO','IS'});
+
+subplot(2,2,2);
+bar(spm_softmax(F_IS(:)));
+title('D inset: Posterior (IS)');
+ylim([0 1]); xticklabels({'IO','IS'});
+
+%% ======= Model Reduction Function =======
+function F = RedMod(LAP, PC)
+    % Returns reduced model log evidences given Laplace approximation
+    qE = LAP.qP.P{1};
+    qC = LAP.qP.C;
+    pE = LAP.M(1).pE;
+    pC = LAP.M(1).pC;
+    for m = 1:numel(PC)
+        rC = diag(spm_vec(PC{m}));
+        F(m,1) = spm_log_evidence(qE, qC, pE, pC, pE, rC);
+    end
+    F = F - min(F);  % Normalize relative to baseline model
+end
