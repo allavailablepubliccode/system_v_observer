@@ -1,0 +1,81 @@
+%% Supplementary Figure 1: Raw micro and macro signals (right hippocampus)
+% This script loads intracranial EEG (macro) and micro-LFP recordings 
+% from right hippocampus, down-samples and truncates them, 
+% and plots both channels per subject.
+
+%% ========== Setup ==========
+
+clear; clc; close all; rng(0);  % reset state
+
+% -------------- USER INPUT REQUIRED -----------------------
+% Set the base path where subject data .mat files are located.
+% Each file should be named: 'subject_<n>.mat' (n = subject number)
+base = 'your_path';
+
+% Path to the region index file (provides hippocampal contact IDs)
+% This should contain a cell array called `indices` with fields `.micro` and `.macro`
+index_file = 'your_path';
+load(index_file);  % loads 'indices'
+
+% Subjects to process (e.g., 1:16)
+subs = 1:16;
+
+% Original and target sampling rates
+orig_fs = 1000;       % Original Hz
+targ_fs = 250;        % Target Hz
+ds      = orig_fs / targ_fs;  % Downsampling factor
+
+% Time window to visualize (in downsampled timepoints)
+tmin = 1;
+tmax = 1000;
+
+%% ========== Plotting ==========
+
+figure
+set(gcf, 'Position', [100 100 1024 536])  % figure size
+
+for ii = 1:numel(subs)
+    subject = subs(ii);
+
+    % Load iEEG and micro-LFP data for this subject
+    file = fullfile(base, ['subject_' num2str(subject) '.mat']);
+    if ~isfile(file)
+        warning('File not found: %s', file);
+        continue;
+    end
+    load(file, 'LFP_macro', 'LFP_micro');  % raw data variables
+
+    % Get channel indices for right hippocampus (subject-specific)
+    mic_idx = double(indices{subject}.micro);
+    mac_idx = double(indices{subject}.macro);
+
+    % Average across right hippocampal channels
+    mic = mean(LFP_micro(:, mic_idx)', 1);
+    mac = mean(LFP_macro(:, mac_idx)', 1);
+
+    % Downsample to target sampling rate
+    mic = downsample(mic, ds);
+    mac = downsample(mac, ds);
+
+    % Standardize length and trim to time window
+    N = min(length(mic), length(mac));
+    mic = mic(1:N);
+    mac = mac(1:N);
+
+    Tmax = min(tmax, N);
+    Tmin = max(1, tmin);
+    mic = mic(Tmin:Tmax);
+    mac = mac(Tmin:Tmax);
+
+    % Plot both channels for this subject
+    subplot(4, 4, ii)
+    plot([mic; mac]', 'LineWidth', 1)
+    title(['Subject ' num2str(subject)])
+    xlabel('Time (samples)')
+    ylabel('Amplitude')
+    legend({'Micro', 'Macro'}, 'Location', 'northeast')
+    axis tight
+    drawnow
+end
+
+sgtitle('Right Hippocampus Raw Signals (Micro + Macro)')
