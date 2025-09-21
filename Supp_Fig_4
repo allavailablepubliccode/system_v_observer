@@ -1,0 +1,125 @@
+% Generate and invert models for all subjects using LAP (Laplace approximation)
+% Used to generate data for Supplementary Figure 4
+
+% **multiplicative noise**, i.e., noise modulated by the latent state.
+%
+% Each subject's data is modeled using a simple dynamical system with observer- and system-level parameters.
+% This script performs model inversion via SPM’s spm_LAP, saving the results per subject.
+%
+% === REQUIREMENTS ===
+% - SPM12 installed and added to MATLAB path
+% - Preprocessed .mat files per subject (macro and micro LFP signals)
+% - ROI index file for hippocampal contacts: right_hippocampus_indices.mat
+% - Function: create_driver(N)
+%
+% === USER ACTION ===
+% Update `base`, `outd`, and `load` paths to match your system.
+
+clear; clc; close all; rng(0);
+
+% ---------------------- File Paths ------------------------
+base = 'your_path';    % Input .mat data files
+outd = 'your_path';    % Output directory for LAP files
+load('your_path');  % Contains 'indices'
+
+% ------------------- Subject and Signal Setup -------------
+subs    = 1:16;                  % Subject IDs
+orig_fs = 1000;                 % Original sampling rate (Hz)
+targ_fs = 250;                  % Target downsampled rate (Hz)
+ds      = orig_fs / targ_fs;   % Downsampling factor
+tmin    = 1;                    % Start index (in downsampled space)
+tmax    = 1000;                 % End index (max 1000 samples used)
+pvr     = 0.5;                  % Prior variance scaling
+
+% ---------------------- Model Specification ----------------
+
+% Embedding and temporal dynamics
+E.n     = 4;       % Embedding dimension
+E.d     = 1;       % Delay embedding
+E.nN    = 8;       % Number of Newton iterations per sample
+E.s     = 1/8;     % Smoothness hyperparameter
+E.dt    = 1/16;    % Time step (affects integration resolution)
+M(1).E  = E;
+
+% Initial latent state conditions (x = system, xt = twin)
+x.x     = 0;
+x.xt    = 0;
+M(1).x  = x;
+
+% Equations of motion (f): two coupled latent states (differ by P.da)
+% note that noise is now multiplicative (state-dependent)
+M(1).f = @(x,v,P) [
+    P.a         * x.x  + P.b * v(1) + P.s1 * x.x * v(2);
+    (P.a + P.da)* x.xt + P.b * v(1) + P.s2 * x.xt * v(2)
+];
+
+% Observer function (g): maps latent states to observable signals (differ by P.dk)
+M(1).g = @(x,v,P) [
+    P.c * tanh(P.k          * x.x);
+    P.c * tanh((P.k + P.dk) * x.xt)
+];
+
+% Prior expectations: start at zero (null hypothesis)
+pE.a  = 0;
+pE.b  = 0;
+pE.c  = 1;
+pE.k  = 0;
+pE.da = 0;
+pE.dk = 0;
+pE.s1 = 0;
+pE.s2 = 0;
+M(1).pE = pE;
+
+% Prior covariances: identity scaled by pvr (soft prior)
+pC = spm_ones(pE);
+M(1).pC = diag(spm_vec(pC)) * pvr;
+
+% Second-level priors: variances over input v
+M(2).v = [1 1];   % Prior variances over each input channel (scene + noise)
+
+% ------------------ Structured Input ------------------------
+
+U       = create_driver(tmax);      % Scene-based regressor
+U(2,:)  = randn(1, tmax);           % Add random Gaussian noise as second input
+DEM.U   = U;
+
+% --------------------- Loop over Subjects -------------------
+
+for ii = 1:numel(subs)
+    subject   = subs(ii);
+    out_file  = fullfile(outd, ['subject_' num2str(subject) '.mat']);
+
+    % Uncomment to skip existing subjects
+    % if exist(out_file, 'file'), continue; end
+
+    % --- Load Empirical LFP Data ---
+    clear LFP_macro LFP_micro
+    load(fullfile(base, ['subject_' num2str(subject) '_mult.mat']));
+
+    % Average within right hippocampus (macro and micro separately)
+    mic = mean(LFP_micro(:, double(indices{subject}.micro))', 1);
+    mac = mean(LFP_macro(:, double(indices{subject}.macro))', 1);
+
+    % Downsample both signals
+    mic = downsample(mic, ds);
+    mac = downsample(mac, ds);
+
+    % Truncate to common length and standard window
+    N = min(length(mic), length(mac));
+    mic = mic(1:N); mac = mac(1:N);
+    Tmax = min(tmax, N);
+    mic = mic(tmin:Tmax);
+    mac = mac(tmin:Tmax);
+
+    % Set up observed data
+    DEM.Y = [mic; mac];
+
+    % Assign model
+    DEM.M = M;
+
+    % ----------------- Run Inversion -------------------
+    LAP = spm_LAP(DEM);
+
+    % ----------------- Save Result ---------------------
+    save(out_file, 'LAP');
+end
