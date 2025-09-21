@@ -1,0 +1,211 @@
+%% Figure 4: System vs Observer Distinction Persists under Mixed Inputs
+% This script replicates the dissociation between system-driven vs
+% observer-driven divergences (as in Figure 3), but includes an additional
+% **random driver** alongside the structured scene-based input.
+%
+
+clear; clc; close all; rng(0);
+
+%% ======= Simulation Settings =======
+N       = 10;     % Number of timepoints
+pvr     = 1;        % Prior variance scaling for model inversion
+
+% Structured scene-based driver
+U = create_driver(N);       
+
+% Add independent random driver
+U(2,:) = randn(1, N);
+
+%% ======= Model Definition (SPM DEM Settings) =======
+E.n     = 4;      % Embedding dimension
+E.d     = 1;      % Data embedding order
+E.nN    = 8;      % Iterations per sample
+E.s     = 1/8;    % Smoothness of fluctuations
+E.dt    = 1/16;   % Integration step size
+M(1).E  = E;
+
+% Initial conditions for latent states
+x.x     = 0;
+x.xt    = 0;
+M(1).x  = x;
+
+% System dynamics (f): two latent states (x, x~), influenced by structured + random input
+M(1).f = @(x,v,P) [P.a         * x.x  + P.b * v(1) + P.s1 * v(2);
+                  (P.a + P.da) * x.xt + P.b * v(1) + P.s2 * v(2)];
+
+% Observer function (g): tanh nonlinearity, allowing divergence in observer sensitivity
+M(1).g = @(x,v,P) [P.c * tanh(P.k          * x.x);
+                   P.c * tanh((P.k + P.dk) * x.xt)];
+
+%% ======= Parameters for Simulation =======
+P.a   = -7/2;
+P.b   =  1/64;
+P.c   = 11/4;
+P.k   =  9/8;
+P.s1  =  1/64;     % Coupling to noise driver (structured/random)
+P.s2  =  2/64;
+
+% Model precisions (inverse variance)
+M(1).V = exp(149/16);       % Output precision
+M(1).W = exp(149/16);       % State precision
+M(2).v = [exp(6), exp(6)];  % Initial state precision (2 inputs)
+M(2).V = exp(149/16);       % Input precision
+
+%% ======= Case A: Identical Observers (IO), Divergent Systems =======
+P.da = 2.5;    % System difference
+P.dk = 0;      % Observer same
+M(1).pE = P;
+
+IO = spm_DEM_generate(M, U, P);
+
+%% ======= Case B: Identical Systems (IS), Divergent Observers =======
+P.da = 0;
+P.dk = -1.2;   % Observer difference
+M(1).pE = P;
+
+IS = spm_DEM_generate(M, U, P);
+
+%% ======= Plot Generated Outputs =======
+figure
+set(gcf,'position',[2 340 1023 165])
+subplot(1,4,1)
+plot(IO.Y')
+title('A: Identical Observers')
+xlabel('Time')
+ylabel('Output')
+
+subplot(1,4,2)
+plot(IS.Y')
+title('B: Identical Systems')
+xlabel('Time')
+ylabel('Output')
+drawnow
+
+%% ======= Model Inversion Setup =======
+pE        = P;
+pE.da     = 0;
+pE.dk     = 0;
+pE.s1     = 0;
+pE.s2     = 0;
+M(1).pE   = pE;
+
+% Allow inference on da, dk, and both input weights s1, s2
+pC        = spm_zeros(pE);
+pC.da     = 1;
+pC.dk     = 1;
+pC.s1     = 1;
+pC.s2     = 1;
+M(1).pC   = diag(spm_vec(pC)) * pvr;
+
+% Assign model structure and inputs to both datasets
+IO.M = M; IO.U = U;
+IS.M = M; IS.U = U;
+
+% Reduced models for BMR
+PC{1} = pC; PC{1}.dk = 0;   % IO model
+PC{2} = pC; PC{2}.da = 0;   % IS model
+
+%% ======= Invert IO Case =======
+LAP_IO = spm_LAP(IO);
+F_IO   = RedMod(LAP_IO, PC);
+
+subplot(1,4,3)
+bar(F_IO)
+title('C: Log Evidence (IO)')
+ylabel('F - min(F)')
+xticklabels({'IO','IS'})
+
+%% ======= Invert IS Case =======
+LAP_IS = spm_LAP(IS);
+F_IS   = RedMod(LAP_IS, PC);
+
+subplot(1,4,4)
+bar(F_IS)
+title('D: Log Evidence (IS)')
+ylabel('F - min(F)')
+xticklabels({'IO','IS'})
+
+%% ======= Posterior Model Probabilities (Optional Insets) =======
+figure
+set(gcf,'position',[2 340 1023 165])
+subplot(1,4,3)
+bar(spm_softmax(F_IO(:)))
+title('C inset: Posterior (IO)')
+xticklabels({'IO','IS'})
+ylim([0 1])
+
+subplot(1,4,4)
+bar(spm_softmax(F_IS(:)))
+title('D inset: Posterior (IS)')
+xticklabels({'IO','IS'})
+ylim([0 1])
+
+%% ======= Model Reduction Function =======
+
+function F = RedMod(LAP, PC)
+% Computes log-evidence of reduced models using SPM's Laplace approximation
+qE = LAP.qP.P{1};
+qC = LAP.qP.C;
+pE = LAP.M(1).pE;
+pC = LAP.M(1).pC;
+for m = 1:numel(PC)
+    rC = diag(spm_vec(PC{m}));
+    F(m,1) = spm_log_evidence(qE,qC,pE,pC,pE,rC);
+end
+F = F - min(F);  % Normalize evidence
+end
+
+function driver = create_driver(N)
+% CREATE_DRIVER generates a structured input regressor with noise.
+%
+% This function simulates an input timeseries composed of two components:
+% (1) Low-frequency, block-like structure based on scene transitions (e.g. movie cutpoints).
+% (2) Superimposed high-frequency Gaussian noise.
+% This is used as input for system–observer generative model simulations.
+%
+% INPUT:
+%   N        - Total number of timepoints to generate
+%
+% OUTPUT:
+%   driver   - 1 x N input vector combining structure + noise
+%
+% NOTE:
+%   You must have a file called `scenecut_info.csv` containing cut times
+%   in seconds, located at:
+%   ~/Dropbox/Work/System_Observer/data/lfp_ieeg/scenecut_info.csv
+%
+%   If needed, adjust the file path and target sampling rate below.
+
+    % ---------------------- Settings ----------------------
+    targ_fs    = 250;   % Target sampling rate (Hz)
+    scene_file = 'your_path';
+
+    % ---------------------- Load scene transitions ----------------------
+    % These define block-wise changes in the driver (e.g. movie scenes)
+    scene_cuts = readmatrix(scene_file);  % In seconds
+
+    % Convert to sample indices
+    scene_samples = round(scene_cuts * targ_fs);
+    scene_samples = scene_samples(scene_samples > 1 & scene_samples < N);
+
+    % Define scene segment start/end points
+    scene_boundaries = unique([1, scene_samples(:)', N + 1]);
+    n_scenes = numel(scene_boundaries) - 1;
+
+    % ---------------------- Base signal ----------------------
+    % Random constant value per scene block (low frequency structure)
+    rng(0);  % Reproducibility
+    base = zeros(1, N);
+    scene_values = rand(1, n_scenes) * 2 - 1;  % Uniform in [-1, 1]
+
+    for s = 1:n_scenes
+        idx_start = scene_boundaries(s);
+        idx_end   = scene_boundaries(s + 1) - 1;
+        base(idx_start:idx_end) = scene_values(s);
+    end
+
+    % ---------------------- Add noise ----------------------
+    noise  = 0.5 * randn(1, N);              % Fast fluctuations
+    driver = base + noise;                   % Combined input
+    driver = smoothdata(driver, 'gaussian', 5);  % Optional smoothing
+end
